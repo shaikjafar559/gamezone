@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Angry Birds Arcade - Play Online</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background: #0f141c;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.7);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 3px solid #2a3b5c;
+            background: #4ba3e3;
+        }
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        .hud-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            pointer-events: none;
+            font-weight: 700;
+            text-shadow: 2px 2px 0 #000;
+        }
+        .hud-badge {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 6px 14px;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.2);
+            font-size: 15px;
+        }
+        .controls-hint {
+            margin-top: 12px;
+            font-size: 13px;
+            color: #8da4c4;
+            text-align: center;
+            max-width: 640px;
+            line-height: 1.5;
+        }
+        .controls-hint span {
+            color: #ffdd44;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="480"></canvas>
+        <div class="hud-overlay">
+            <div class="hud-badge" id="scoreDisplay">SCORE: 0</div>
+            <div class="hud-badge" id="levelDisplay" style="color: #ffdd44;">LEVEL 1 / 4</div>
+            <div class="hud-badge" id="birdsDisplay">BIRDS: 3</div>
+        </div>
+    </div>
+    <div class="controls-hint">
+        🎮 <span>Drag & Release with Mouse/Touch</span> to slingshot the bird! | Or use <span>Arrow Keys + Space</span> to aim & launch.
+        <br>Click / Spacebar again in mid-flight to trigger <span>Special Ability</span> (Red: Dive Bomb 💥 | Chuck: Sonic Boost 🚀)!
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const scoreDisplay = document.getElementById("scoreDisplay");
+        const levelDisplay = document.getElementById("levelDisplay");
+        const birdsDisplay = document.getElementById("birdsDisplay");
+
+        // Web Audio Synthesizer
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        let audioCtx = null;
+        function initAudio() {
+            if (!audioCtx) audioCtx = new AudioCtx();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playSound(type) {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            if (type === 'snap') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(350, now);
+                osc.frequency.exponentialRampToValueAtTime(700, now + 0.08);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.08);
+                osc.start(now);
+                osc.stop(now + 0.08);
+            } else if (type === 'hit') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(140, now);
+                osc.frequency.exponentialRampToValueAtTime(40, now + 0.1);
+                gain.gain.setValueAtTime(0.35, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.1);
+                osc.start(now);
+                osc.stop(now + 0.1);
+            } else if (type === 'pop') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(450, now);
+                osc.frequency.exponentialRampToValueAtTime(880, now + 0.12);
+                gain.gain.setValueAtTime(0.4, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.12);
+                osc.start(now);
+                osc.stop(now + 0.12);
+            } else if (type === 'boost') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.exponentialRampToValueAtTime(950, now + 0.2);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.2);
+                osc.start(now);
+                osc.stop(now + 0.2);
+            } else if (type === 'tnt') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(110, now);
+                osc.frequency.exponentialRampToValueAtTime(30, now + 0.35);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.35);
+                osc.start(now);
+                osc.stop(now + 0.35);
+            } else if (type === 'win') {
+                [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+                    const o = audioCtx.createOscillator();
+                    const g = audioCtx.createGain();
+                    o.connect(g);
+                    g.connect(audioCtx.destination);
+                    o.frequency.value = freq;
+                    g.gain.setValueAtTime(0.25, now + i * 0.1);
+                    g.gain.linearRampToValueAtTime(0, now + i * 0.1 + 0.15);
+                    o.start(now + i * 0.1);
+                    o.stop(now + i * 0.1 + 0.15);
+                });
+            }
+        }
+
+        // World Config
+        const WIDTH = 800;
+        const HEIGHT = 480;
+        const GROUND_Y = 416;
+        const GRAVITY = 720;
+        const SLING = { x: 140, y: 350 };
+
+        // Game State
+        let score = 0;
+        let currentLevel = 1;
+        let birdsLeft = 3;
+        let gameState = "AIMING"; // AIMING, FLYING, SETTLING, WON, GAMEOVER
+        let bird = null;
+        let blocks = [];
+        let pigs = [];
+        let particles = [];
+        let clouds = [
+            { x: 100, y: 70, r: 40 },
+            { x: 380, y: 90, r: 50 },
+            { x: 650, y: 60, r: 45 }
+        ];
+
+        // Slingshot Pull Dragging
+        let isDragging = false;
+        let dragX = SLING.x;
+        let dragY = SLING.y;
+        let hasUsedSpecial = false;
+        let shotStartTime = 0;
+        let settleTimeout = 0;
+
+        function updateUI() {
+            scoreDisplay.textContent = `SCORE: ${score}`;
+            levelDisplay.textContent = `LEVEL ${currentLevel} / 4`;
+            birdsDisplay.textContent = `BIRDS: ${birdsLeft + 1}`;
+        }
+
+        // Entities
+        class Bird {
+            constructor(type, x, y) {
+                this.type = type; // 'red' or 'chuck'
+                this.x = x;
+                this.y = y;
+                this.radius = 16;
+                this.vx = 0;
+                this.vy = 0;
+                this.inFlight = false;
+                this.trail = [];
+            }
+            update(dt) {
+                if (this.inFlight) {
+                    this.vy += GRAVITY * dt;
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+
+                    // Smoke trail
+                    if (Math.random() < 0.3) {
+                        particles.push(new Particle(this.x, this.y, (Math.random()-0.5)*20, (Math.random()-0.5)*20, 5, "rgba(255,255,255,0.7)", 0.6));
+                    }
+
+                    // Ground collision
+                    if (this.y >= GROUND_Y - this.radius) {
+                        this.y = GROUND_Y - this.radius;
+                        this.vy = -this.vy * 0.35;
+                        this.vx = this.vx * 0.65;
+                        if (Math.abs(this.vx) < 20 && Math.abs(this.vy) < 25) {
+                            this.vx = 0;
+                            this.vy = 0;
+                        }
+                    }
+                    // Walls
+                    if (this.x > WIDTH - this.radius) {
+                        this.x = WIDTH - this.radius;
+                        this.vx = -this.vx * 0.4;
+                    }
+                    if (this.x < this.radius) {
+                        this.x = this.radius;
+                        this.vx = 0;
+                    }
+                }
+            }
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                if (this.type === 'red') {
+                    // Red Bird
+                    ctx.fillStyle = "#e02626";
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Belly
+                    ctx.fillStyle = "#f3d1b5";
+                    ctx.beginPath();
+                    ctx.arc(0, 5, this.radius * 0.65, 0, Math.PI);
+                    ctx.fill();
+
+                    // Eyes
+                    ctx.fillStyle = "#fff";
+                    ctx.beginPath();
+                    ctx.arc(5, -4, 5, 0, Math.PI * 2);
+                    ctx.arc(12, -4, 5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = "#000";
+                    ctx.beginPath();
+                    ctx.arc(6, -4, 2.5, 0, Math.PI * 2);
+                    ctx.arc(13, -4, 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Angry Eyebrows
+                    ctx.strokeStyle = "#000";
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(1, -9);
+                    ctx.lineTo(8, -6);
+                    ctx.lineTo(16, -9);
+                    ctx.stroke();
+
+                    // Beak
+                    ctx.fillStyle = "#ffb703";
+                    ctx.beginPath();
+                    ctx.moveTo(7, -1);
+                    ctx.lineTo(19, 3);
+                    ctx.lineTo(7, 7);
+                    ctx.fill();
+                } else {
+                    // Chuck (Yellow Triangle)
+                    ctx.fillStyle = "#ffb703";
+                    ctx.beginPath();
+                    ctx.moveTo(-14, 14);
+                    ctx.lineTo(18, 0);
+                    ctx.lineTo(-14, -14);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Eyes
+                    ctx.fillStyle = "#fff";
+                    ctx.beginPath();
+                    ctx.arc(2, -4, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#000";
+                    ctx.beginPath();
+                    ctx.arc(3, -4, 2, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Beak
+                    ctx.fillStyle = "#fb8500";
+                    ctx.beginPath();
+                    ctx.moveTo(8, -2);
+                    ctx.lineTo(18, 1);
+                    ctx.lineTo(8, 4);
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+        }
+
+        class Block {
+            constructor(type, x, y, w, h, hp) {
+                this.type = type; // 'wood', 'stone', 'tnt'
+                this.x = x;
+                this.y = y;
+                this.w = w;
+                this.h = h;
+                this.hp = hp;
+                this.maxHp = hp;
+                this.vx = 0;
+                this.vy = 0;
+                this.angle = 0;
+                this.angularVelocity = 0;
+                this.isResting = true;
+            }
+            update(dt) {
+                if (!this.isResting) {
+                    this.vy += GRAVITY * dt;
+                    this.x += this.vx * dt;
+                    this.y += this.vy * dt;
+                    this.angle += this.angularVelocity * dt;
+
+                    // Ground check
+                    if (this.y + this.h / 2 >= GROUND_Y) {
+                        this.y = GROUND_Y - this.h / 2;
+                        this.vy = 0;
+                        this.vx *= 0.7;
+                        this.angularVelocity *= 0.5;
+                        if (Math.abs(this.vx) < 10) {
+                            this.vx = 0;
+                            this.angularVelocity = 0;
+                            this.isResting = true;
+                        }
+                    }
+                }
+            }
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+
+                if (this.type === 'wood') {
+                    ctx.fillStyle = this.hp < this.maxHp ? "#a26b38" : "#c4884f";
+                    ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+                    ctx.strokeStyle = "#784518";
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(-this.w/2, -this.h/2, this.w, this.h);
+                } else if (this.type === 'stone') {
+                    ctx.fillStyle = this.hp < this.maxHp ? "#758296" : "#94a3b8";
+                    ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+                    ctx.strokeStyle = "#475569";
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(-this.w/2, -this.h/2, this.w, this.h);
+                } else if (this.type === 'tnt') {
+                    ctx.fillStyle = "#e63946";
+                    ctx.fillRect(-this.w/2, -this.h/2, this.w, this.h);
+                    ctx.strokeStyle = "#ba181b";
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(-this.w/2, -this.h/2, this.w, this.h);
+                    ctx.fillStyle = "#fff";
+                    ctx.font = "bold 12px sans-serif";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText("TNT", 0, 0);
+                }
+                ctx.restore();
+            }
+        }
+
+        class Pig {
+            constructor(type, x, y, hp) {
+                this.type = type; // 'minion' or 'king'
+                this.x = x;
+                this.y = y;
+                this.radius = type === 'king' ? 22 : 16;
+                this.hp = hp;
+                this.vx = 0;
+                this.vy = 0;
+            }
+            update(dt) {
+                this.vy += GRAVITY * dt;
+                this.x += this.vx * dt;
+                this.y += this.vy * dt;
+                if (this.y + this.radius >= GROUND_Y) {
+                    this.y = GROUND_Y - this.radius;
+                    this.vy = 0;
+                    this.vx *= 0.7;
+                }
+            }
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Body
+                ctx.fillStyle = "#48bb78";
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = "#276749";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Eyes
+                ctx.fillStyle = "#fff";
+                ctx.beginPath();
+                ctx.arc(-5, -4, 4, 0, Math.PI * 2);
+                ctx.arc(5, -4, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = "#000";
+                ctx.beginPath();
+                ctx.arc(-5, -4, 2, 0, Math.PI * 2);
+                ctx.arc(5, -4, 2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Snout
+                ctx.fillStyle = "#38a169";
+                ctx.beginPath();
+                ctx.ellipse(0, 4, 7, 5, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = "#1c4532";
+                ctx.beginPath();
+                ctx.arc(-3, 4, 1.5, 0, Math.PI * 2);
+                ctx.arc(3, 4, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Crown for King Pig
+                if (this.type === 'king') {
+                    ctx.fillStyle = "#ffd166";
+                    ctx.beginPath();
+                    ctx.moveTo(-12, -this.radius);
+                    ctx.lineTo(-8, -this.radius - 8);
+                    ctx.lineTo(-3, -this.radius - 2);
+                    ctx.lineTo(0, -this.radius - 10);
+                    ctx.lineTo(3, -this.radius - 2);
+                    ctx.lineTo(8, -this.radius - 8);
+                    ctx.lineTo(12, -this.radius);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+                ctx.restore();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, vx, vy, size, color, life) {
+                this.x = x;
+                this.y = y;
+                this.vx = vx;
+                this.vy = vy;
+                this.size = size;
+                this.color = color;
+                this.life = life;
+                this.maxLife = life;
+            }
+            update(dt) {
+                this.x += this.vx * dt;
+                this.y += this.vy * dt;
+                this.life -= dt;
+            }
+            draw() {
+                if (this.life <= 0) return;
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, this.life / this.maxLife);
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // Spawn Levels
+        function loadLevel(lvl) {
+            currentLevel = lvl;
+            blocks = [];
+            pigs = [];
+            particles = [];
+            dragX = SLING.x;
+            dragY = SLING.y;
+            hasUsedSpecial = false;
+
+            if (lvl === 1) {
+                birdsLeft = 2;
+                // Level 1: 1 Wood shelter with 2 pigs
+                blocks.push(new Block('wood', 570, 360, 20, 110, 2));
+                blocks.push(new Block('wood', 670, 360, 20, 110, 2));
+                blocks.push(new Block('wood', 620, 300, 130, 16, 2));
+                pigs.push(new Pig('minion', 620, 395, 1));
+                pigs.push(new Pig('minion', 620, 280, 1));
+            } else if (lvl === 2) {
+                birdsLeft = 2;
+                // Level 2: Double towers
+                blocks.push(new Block('stone', 520, 360, 20, 110, 3));
+                blocks.push(new Block('stone', 580, 360, 20, 110, 3));
+                blocks.push(new Block('wood', 550, 300, 90, 16, 2));
+                pigs.push(new Pig('minion', 550, 395, 1));
+
+                blocks.push(new Block('wood', 660, 360, 20, 110, 2));
+                blocks.push(new Block('wood', 720, 360, 20, 110, 2));
+                blocks.push(new Block('wood', 690, 300, 90, 16, 2));
+                pigs.push(new Pig('minion', 690, 280, 1));
+                pigs.push(new Pig('minion', 620, 395, 1));
+            } else if (lvl === 3) {
+                birdsLeft = 3;
+                // Level 3: TNT Blastzone
+                blocks.push(new Block('tnt', 570, 395, 40, 40, 1));
+                blocks.push(new Block('wood', 670, 395, 40, 40, 2));
+                blocks.push(new Block('stone', 570, 330, 20, 90, 3));
+                blocks.push(new Block('stone', 670, 330, 20, 90, 3));
+                blocks.push(new Block('wood', 620, 280, 130, 16, 2));
+                blocks.push(new Block('tnt', 620, 255, 36, 36, 1));
+                pigs.push(new Pig('minion', 620, 225, 1));
+                pigs.push(new Pig('minion', 720, 395, 1));
+            } else if (lvl === 4) {
+                birdsLeft = 3;
+                // Level 4: Piggy Citadel & King Pig
+                blocks.push(new Block('stone', 530, 360, 22, 110, 3));
+                blocks.push(new Block('tnt', 620, 395, 40, 40, 1));
+                blocks.push(new Block('stone', 710, 360, 22, 110, 3));
+                blocks.push(new Block('wood', 575, 300, 100, 18, 2));
+                blocks.push(new Block('wood', 665, 300, 100, 18, 2));
+                pigs.push(new Pig('minion', 575, 395, 1));
+                pigs.push(new Pig('minion', 665, 395, 1));
+
+                blocks.push(new Block('wood', 585, 240, 18, 100, 2));
+                blocks.push(new Block('wood', 655, 240, 18, 100, 2));
+                blocks.push(new Block('wood', 620, 185, 100, 16, 2));
+                pigs.push(new Pig('king', 620, 155, 2));
+            }
+
+            spawnBird();
+            updateUI();
+        }
+
+        function spawnBird() {
+            const birdType = birdsLeft % 2 === 1 ? 'chuck' : 'red';
+            bird = new Bird(birdType, SLING.x, SLING.y);
+            gameState = "AIMING";
+            hasUsedSpecial = false;
+        }
+
+        function triggerTNTExplosion(tnt) {
+            playSound('tnt');
+            const tx = tnt.x;
+            const ty = tnt.y;
+
+            // Explosion particles
+            for (let i = 0; i < 40; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const spd = Math.random() * 320 + 80;
+                particles.push(new Particle(tx, ty, Math.cos(angle)*spd, Math.sin(angle)*spd, Math.random()*8+4, i%2===0?"#ffdd00":"#ff3300", 0.7));
+            }
+
+            // Blast nearby blocks
+            blocks.forEach((b, idx) => {
+                const dx = b.x - tx;
+                const dy = b.y - ty;
+                const dist = Math.hypot(dx, dy);
+                if (dist < 150) {
+                    b.isResting = false;
+                    b.vx += (dx / (dist + 1)) * 360;
+                    b.vy -= (150 - dist) * 2.8;
+                    b.angularVelocity = (Math.random() - 0.5) * 8;
+                    b.hp -= 2;
+                }
+            });
+
+            // Blast nearby pigs
+            pigs.forEach(p => {
+                const dx = p.x - tx;
+                const dy = p.y - ty;
+                const dist = Math.hypot(dx, dy);
+                if (dist < 160) {
+                    p.hp -= 2;
+                    p.vx += (dx / (dist + 1)) * 380;
+                    p.vy -= 250;
+                }
+            });
+        }
+
+        // Mouse & Touch Slingshot Dragging
+        function getCanvasCoords(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return {
+                x: (clientX - rect.left) * (WIDTH / rect.width),
+                y: (clientY - rect.top) * (HEIGHT / rect.height)
+            };
+        }
+
+        canvas.addEventListener("mousedown", (e) => {
+            initAudio();
+            const pos = getCanvasCoords(e);
+            if (gameState === "AIMING") {
+                const dist = Math.hypot(pos.x - SLING.x, pos.y - SLING.y);
+                if (dist < 60) {
+                    isDragging = true;
+                }
+            } else if (gameState === "FLYING" && !hasUsedSpecial) {
+                activateSpecial();
+            }
+        });
+
+        window.addEventListener("mousemove", (e) => {
+            if (!isDragging) return;
+            const pos = getCanvasCoords(e);
+            const dx = pos.x - SLING.x;
+            const dy = pos.y - SLING.y;
+            const maxPull = 90;
+            const dist = Math.hypot(dx, dy);
+            if (dist > maxPull) {
+                dragX = SLING.x + (dx / dist) * maxPull;
+                dragY = SLING.y + (dy / dist) * maxPull;
+            } else {
+                dragX = pos.x;
+                dragY = pos.y;
+            }
+            bird.x = dragX;
+            bird.y = dragY;
+        });
+
+        window.addEventListener("mouseup", () => {
+            if (isDragging) {
+                isDragging = false;
+                launchBird();
+            }
+        });
+
+        // Touch support
+        canvas.addEventListener("touchstart", (e) => {
+            initAudio();
+            const pos = getCanvasCoords(e);
+            if (gameState === "AIMING") {
+                const dist = Math.hypot(pos.x - SLING.x, pos.y - SLING.y);
+                if (dist < 60) isDragging = true;
+            } else if (gameState === "FLYING" && !hasUsedSpecial) {
+                activateSpecial();
+            }
+        });
+
+        window.addEventListener("touchmove", (e) => {
+            if (!isDragging) return;
+            const pos = getCanvasCoords(e);
+            const dx = pos.x - SLING.x;
+            const dy = pos.y - SLING.y;
+            const maxPull = 90;
+            const dist = Math.hypot(dx, dy);
+            if (dist > maxPull) {
+                dragX = SLING.x + (dx / dist) * maxPull;
+                dragY = SLING.y + (dy / dist) * maxPull;
+            } else {
+                dragX = pos.x;
+                dragY = pos.y;
+            }
+            bird.x = dragX;
+            bird.y = dragY;
+        });
+
+        window.addEventListener("touchend", () => {
+            if (isDragging) {
+                isDragging = false;
+                launchBird();
+            }
+        });
+
+        // Keyboard Launch & Aim
+        window.addEventListener("keydown", (e) => {
+            initAudio();
+            if (e.code === "Space") {
+                if (gameState === "AIMING") {
+                    dragX = SLING.x - 65;
+                    dragY = SLING.y + 40;
+                    launchBird();
+                } else if (gameState === "FLYING" && !hasUsedSpecial) {
+                    activateSpecial();
+                }
+            }
+        });
+
+        function launchBird() {
+            playSound('snap');
+            const pullDx = SLING.x - dragX;
+            const pullDy = SLING.y - dragY;
+            bird.vx = pullDx * 8.5;
+            bird.vy = pullDy * 8.5;
+            bird.inFlight = true;
+            gameState = "FLYING";
+            shotStartTime = performance.now();
+        }
+
+        function activateSpecial() {
+            hasUsedSpecial = true;
+            playSound('boost');
+            if (bird.type === 'chuck') {
+                bird.vx += 380;
+                bird.vy = -40;
+                for (let i = 0; i < 15; i++) {
+                    particles.push(new Particle(bird.x, bird.y, (Math.random()-0.5)*100-150, (Math.random()-0.5)*60, 6, "#ffdd00", 0.5));
+                }
+            } else {
+                bird.vx = bird.vx * 1.35 + 80;
+                bird.vy += 320;
+                for (let i = 0; i < 15; i++) {
+                    particles.push(new Particle(bird.x, bird.y, (Math.random()-0.5)*120, (Math.random()-0.5)*120, 6, "#e63946", 0.5));
+                }
+            }
+        }
+
+        // Physics & Collisions
+        function checkCollisions() {
+            if (!bird || !bird.inFlight) return;
+
+            // Bird with Blocks
+            blocks.forEach((b, bIdx) => {
+                // Approximate AABB vs Circle
+                const nearestX = Math.max(b.x - b.w/2, Math.min(bird.x, b.x + b.w/2));
+                const nearestY = Math.max(b.y - b.h/2, Math.min(bird.y, b.y + b.h/2));
+                const dx = bird.x - nearestX;
+                const dy = bird.y - nearestY;
+                const dist = Math.hypot(dx, dy);
+
+                if (dist < bird.radius) {
+                    playSound('hit');
+                    b.isResting = false;
+                    const speed = Math.hypot(bird.vx, bird.vy);
+                    b.hp -= speed > 300 ? 2 : 1;
+                    b.vx = bird.vx * 0.45;
+                    b.vy = bird.vy * 0.35 - 40;
+                    b.angularVelocity = (Math.random() - 0.5) * 6;
+
+                    bird.vx *= 0.35;
+                    bird.vy = bird.vy * 0.3 - 30;
+
+                    for (let i = 0; i < 8; i++) {
+                        particles.push(new Particle(nearestX, nearestY, (Math.random()-0.5)*120, (Math.random()-0.5)*120, 4, b.type==='stone'?"#94a3b8":"#c4884f", 0.5));
+                    }
+
+                    if (b.type === 'tnt') {
+                        triggerTNTExplosion(b);
+                        b.hp = 0;
+                    }
+                }
+            });
+
+            // Bird with Pigs
+            pigs.forEach(p => {
+                const dist = Math.hypot(bird.x - p.x, bird.y - p.y);
+                if (dist < bird.radius + p.radius) {
+                    p.hp -= 2;
+                    playSound('pop');
+                    score += 500;
+                    updateUI();
+                    for (let i = 0; i < 15; i++) {
+                        particles.push(new Particle(p.x, p.y, (Math.random()-0.5)*150, (Math.random()-0.5)*150, 5, "#48bb78", 0.6));
+                    }
+                }
+            });
+
+            // Blocks with Pigs (Crushing)
+            blocks.forEach(b => {
+                if (!b.isResting && (Math.abs(b.vx) > 40 || Math.abs(b.vy) > 40)) {
+                    pigs.forEach(p => {
+                        const dist = Math.hypot(b.x - p.x, b.y - p.y);
+                        if (dist < b.w/2 + p.radius) {
+                            p.hp -= 1;
+                            playSound('pop');
+                            score += 500;
+                            updateUI();
+                            for (let i = 0; i < 12; i++) {
+                                particles.push(new Particle(p.x, p.y, (Math.random()-0.5)*120, (Math.random()-0.5)*120, 5, "#48bb78", 0.5));
+                            }
+                        }
+                    });
+                }
+            });
+
+            // Clean up destroyed items
+            blocks = blocks.filter(b => {
+                if (b.hp <= 0) {
+                    score += 100;
+                    updateUI();
+                    return false;
+                }
+                return true;
+            });
+            pigs = pigs.filter(p => p.hp > 0);
+        }
+
+        // Main Loop
+        let lastTime = performance.now();
+        function loop(timestamp) {
+            const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+            lastTime = timestamp;
+
+            // Background & Clouds
+            ctx.fillStyle = "#4ba3e3";
+            ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+            // Sun
+            ctx.fillStyle = "#ffd166";
+            ctx.beginPath();
+            ctx.arc(720, 80, 45, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Clouds
+            ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+            clouds.forEach(c => {
+                c.x += 8 * dt;
+                if (c.x - c.r > WIDTH) c.x = -c.r * 2;
+                ctx.beginPath();
+                ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+                ctx.arc(c.x + c.r * 0.6, c.y - 10, c.r * 0.7, 0, Math.PI * 2);
+                ctx.arc(c.x - c.r * 0.6, c.y + 5, c.r * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Distant hills
+            ctx.fillStyle = "#38b000";
+            ctx.beginPath();
+            ctx.arc(180, 540, 260, 0, Math.PI * 2);
+            ctx.arc(680, 560, 320, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Ground
+            ctx.fillStyle = "#2d6a4f";
+            ctx.fillRect(0, GROUND_Y, WIDTH, 12);
+            ctx.fillStyle = "#7f4f24";
+            ctx.fillRect(0, GROUND_Y + 12, WIDTH, HEIGHT - (GROUND_Y + 12));
+
+            // Slingshot Base & Rubber Bands
+            ctx.fillStyle = "#582f0e";
+            ctx.fillRect(SLING.x - 6, SLING.y, 12, GROUND_Y - SLING.y);
+            ctx.fillRect(SLING.x - 18, SLING.y - 30, 8, 35);
+            ctx.fillRect(SLING.x + 10, SLING.y - 30, 8, 35);
+
+            if (gameState === "AIMING" && isDragging) {
+                // Rubber Bands
+                ctx.strokeStyle = "#2b1e16";
+                ctx.lineWidth = 5;
+                ctx.beginPath();
+                ctx.moveTo(SLING.x - 14, SLING.y - 18);
+                ctx.lineTo(bird.x, bird.y);
+                ctx.moveTo(SLING.x + 14, SLING.y - 18);
+                ctx.lineTo(bird.x, bird.y);
+                ctx.stroke();
+
+                // Trajectory Guide Dots
+                const simVx = (SLING.x - dragX) * 8.5;
+                const simVy = (SLING.y - dragY) * 8.5;
+                ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
+                for (let i = 1; i <= 8; i++) {
+                    const t = i * 0.08;
+                    const dotX = bird.x + simVx * t;
+                    const dotY = bird.y + simVy * t + 0.5 * GRAVITY * t * t;
+                    if (dotY < GROUND_Y && dotX < WIDTH) {
+                        ctx.beginPath();
+                        ctx.arc(dotX, dotY, 4, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            // Updates
+            if (bird) bird.update(dt);
+            blocks.forEach(b => b.update(dt));
+            pigs.forEach(p => p.update(dt));
+            particles.forEach(pt => pt.update(dt));
+            particles = particles.filter(pt => pt.life > 0);
+
+            checkCollisions();
+
+            // Draws
+            blocks.forEach(b => b.draw());
+            pigs.forEach(p => p.draw());
+            if (bird) bird.draw();
+            particles.forEach(pt => pt.draw());
+
+            // Flight State Check
+            if (gameState === "FLYING") {
+                const flightTime = (performance.now() - shotStartTime) / 1000;
+                const stopped = Math.abs(bird.vx) < 5 && Math.abs(bird.vy) < 5;
+                if (flightTime > 4.5 || (stopped && flightTime > 0.8)) {
+                    gameState = "SETTLING";
+                    settleTimeout = performance.now() + 1500;
+                }
+            }
+
+            // Settling Check
+            if (gameState === "SETTLING" && performance.now() > settleTimeout) {
+                if (pigs.length === 0) {
+                    // Level Won!
+                    playSound('win');
+                    score += (birdsLeft + 1) * 1000;
+                    updateUI();
+                    if (currentLevel < 4) {
+                        alert(`🎉 LEVEL ${currentLevel} CLEARED!\nBonus: +${(birdsLeft + 1) * 1000} Points!`);
+                        loadLevel(currentLevel + 1);
+                    } else {
+                        alert(`🏆 CONGRATULATIONS! YOU SAVED THE EGGS!\nFinal Score: ${score}`);
+                        loadLevel(1);
+                    }
+                } else {
+                    // Pigs survived
+                    if (birdsLeft > 0) {
+                        birdsLeft--;
+                        updateUI();
+                        spawnBird();
+                    } else {
+                        alert("💥 LEVEL FAILED! Pigs survived. Click OK to retry!");
+                        loadLevel(currentLevel);
+                    }
+                }
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        loadLevel(1);
+        requestAnimationFrame(loop);
+    </script>
+</body>
+</html>
